@@ -215,7 +215,7 @@ List items from Slack's Saved and To-dos panels (formerly "Save for Later"), wit
 - **Parameters:**
   - `filter` (string, default `"saved"`): `"saved"` (all active items, Saved and To-dos), `"saved_no_due_date"` (Saved panel only), `"todo"` (To-dos panel only), `"completed"` (marked done), `"archived"`.
   - `limit` (number, default `50`): Maximum number of items to return. Auto-paginates.
-  - `include_messages` (boolean, default `true`): If true, fetches the actual saved message content. If false, returns metadata only.
+  - `include_messages` (boolean, default `true`): If true, fetches the actual saved message content (with `TodoState`, `DateDue` and a `Permalink` per message). If false, returns metadata only.
   - `max_messages_per_item` (number, default `5`): Max messages to fetch per saved item (for thread replies).
 
 ### 17. saved_update

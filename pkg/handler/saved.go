@@ -10,6 +10,7 @@ import (
 	"github.com/gocarina/gocsv"
 	"github.com/korotovsky/slack-mcp-server/pkg/limiter"
 	"github.com/korotovsky/slack-mcp-server/pkg/provider"
+	"github.com/korotovsky/slack-mcp-server/pkg/provider/edge"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/slack-go/slack"
 	"go.uber.org/zap"
@@ -24,6 +25,13 @@ type SavedItemRow struct {
 	DateDue     string `csv:"DateDue"`
 	State       string `csv:"State"`
 	TodoState   string `csv:"TodoState"`
+}
+
+// SavedMessageRow is a saved message with its Saved/To-dos metadata.
+type SavedMessageRow struct {
+	TodoState string `csv:"TodoState"`
+	DateDue   string `csv:"DateDue"`
+	Message
 }
 
 // ValidSavedFilters are the filter values accepted by saved.list.
@@ -51,10 +59,16 @@ func (h *SavedHandler) SavedListHandler(ctx context.Context, request mcp.CallToo
 	maxMsgsPerItem := request.GetInt("max_messages_per_item", 5)
 
 	channelsMaps := h.apiProvider.ProvideChannelsMaps()
+	workspaceURL := ""
+	if includeMessages {
+		if ar, err := h.apiProvider.Slack().AuthTest(); err == nil {
+			workspaceURL = ar.URL
+		}
+	}
 	rl := limiter.Tier3.Limiter()
 
 	var allItems []SavedItemRow
-	var allMessages []Message
+	var allMessages []SavedMessageRow
 	cursor := ""
 	fetched := 0
 	pageSize := limit
@@ -103,68 +117,11 @@ func (h *SavedHandler) SavedListHandler(ctx context.Context, request mcp.CallToo
 				if err := rl.Wait(ctx); err != nil {
 					break
 				}
-				histParams := &slack.GetConversationHistoryParameters{
-					ChannelID: item.ItemID,
-					Latest:    item.Ts,
-					Oldest:    item.Ts,
-					Inclusive: true,
-					Limit:     1,
-				}
-				histResp, err := h.apiProvider.Slack().GetConversationHistoryContext(ctx, histParams)
-				if err != nil {
-					h.logger.Warn("Failed to fetch saved message via history, trying replies",
-						zap.String("channel", item.ItemID),
-						zap.String("ts", item.Ts),
-						zap.Error(err))
-					allMessages = append(allMessages, Message{
-						MsgID:   item.Ts,
-						Channel: channelName,
-						Text:    "[message content unavailable — channel access denied]",
-						Time:    formatUnixTs(item.DateCreated),
-					})
-					continue
-				}
-				if len(histResp.Messages) > 0 {
-					msg := histResp.Messages[0]
-					if msg.ThreadTimestamp != "" && msg.ThreadTimestamp != msg.Timestamp {
-						repliesParams := &slack.GetConversationRepliesParameters{
-							ChannelID: item.ItemID,
-							Timestamp: msg.ThreadTimestamp,
-							Latest:    item.Ts,
-							Oldest:    item.Ts,
-							Inclusive: true,
-							Limit:     maxMsgsPerItem,
-						}
-						replies, _, _, err := h.apiProvider.Slack().GetConversationRepliesContext(ctx, repliesParams)
-						if err == nil && len(replies) > 0 {
-							msgs := h.convHandler.convertMessagesFromHistory(ctx, replies, item.ItemID, false)
-							allMessages = append(allMessages, msgs...)
-							continue
-						}
+				for _, m := range h.fetchSavedItemMessages(ctx, item, channelName, maxMsgsPerItem) {
+					if m.Permalink == "" {
+						m.Permalink = savedPermalink(workspaceURL, item.ItemID, m.MsgID, m.ThreadTs)
 					}
-					msgs := h.convHandler.convertMessagesFromHistory(ctx, histResp.Messages, item.ItemID, false)
-					allMessages = append(allMessages, msgs...)
-				} else {
-					repliesParams := &slack.GetConversationRepliesParameters{
-						ChannelID: item.ItemID,
-						Timestamp: item.Ts,
-						Latest:    item.Ts,
-						Oldest:    item.Ts,
-						Inclusive: true,
-						Limit:     maxMsgsPerItem,
-					}
-					replies, _, _, err := h.apiProvider.Slack().GetConversationRepliesContext(ctx, repliesParams)
-					if err == nil && len(replies) > 0 {
-						msgs := h.convHandler.convertMessagesFromHistory(ctx, replies, item.ItemID, false)
-						allMessages = append(allMessages, msgs...)
-					} else {
-						allMessages = append(allMessages, Message{
-							MsgID:   item.Ts,
-							Channel: channelName,
-							Text:    "[saved item — message not found in channel history]",
-							Time:    formatUnixTs(item.DateCreated),
-						})
-					}
+					allMessages = append(allMessages, SavedMessageRow{TodoState: item.TodoState, DateDue: row.DateDue, Message: m})
 				}
 			}
 		}
@@ -176,7 +133,11 @@ func (h *SavedHandler) SavedListHandler(ctx context.Context, request mcp.CallToo
 	}
 
 	if includeMessages && len(allMessages) > 0 {
-		return marshalMessagesToCSV(allMessages)
+		csvBytes, err := gocsv.MarshalBytes(&allMessages)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal saved messages: %v", err)
+		}
+		return mcp.NewToolResultText(string(csvBytes)), nil
 	}
 
 	csvBytes, err := gocsv.MarshalBytes(&allItems)
@@ -256,9 +217,86 @@ func (h *SavedHandler) SavedRemoveHandler(ctx context.Context, request mcp.CallT
 	return mcp.NewToolResultText(fmt.Sprintf("Successfully removed saved item (item_id=%s, ts=%s)", itemID, ts)), nil
 }
 
+// savedPermalink builds a message link from the workspace URL, e.g. https://x.slack.com/.
+func savedPermalink(workspaceURL, channelID, ts, threadTs string) string {
+	if workspaceURL == "" || channelID == "" || ts == "" {
+		return ""
+	}
+	link := fmt.Sprintf("%sarchives/%s/p%s", strings.TrimSuffix(workspaceURL, "/")+"/", channelID, strings.ReplaceAll(ts, ".", ""))
+	if threadTs != "" && threadTs != ts {
+		link += fmt.Sprintf("?thread_ts=%s&cid=%s", threadTs, channelID)
+	}
+	return link
+}
+
 func formatUnixTs(ts int64) string {
 	if ts == 0 {
 		return ""
 	}
 	return time.Unix(ts, 0).UTC().Format("2006-01-02 15:04")
+}
+
+// fetchSavedItemMessages returns the saved message, or its thread replies up to it.
+func (h *SavedHandler) fetchSavedItemMessages(ctx context.Context, item edge.SavedItem, channelName string, maxMsgsPerItem int) []Message {
+	histParams := &slack.GetConversationHistoryParameters{
+		ChannelID: item.ItemID,
+		Latest:    item.Ts,
+		Oldest:    item.Ts,
+		Inclusive: true,
+		Limit:     1,
+	}
+	histResp, err := h.apiProvider.Slack().GetConversationHistoryContext(ctx, histParams)
+	if err != nil {
+		h.logger.Warn("Failed to fetch saved message via history, trying replies",
+			zap.String("channel", item.ItemID),
+			zap.String("ts", item.Ts),
+			zap.Error(err))
+		return []Message{{
+			MsgID:   item.Ts,
+			Channel: channelName,
+			Text:    "[message content unavailable — channel access denied]",
+			Time:    formatUnixTs(item.DateCreated),
+		}}
+	}
+	if len(histResp.Messages) > 0 {
+		msg := histResp.Messages[0]
+		if msg.ThreadTimestamp != "" && msg.ThreadTimestamp != msg.Timestamp {
+			repliesParams := &slack.GetConversationRepliesParameters{
+				ChannelID: item.ItemID,
+				Timestamp: msg.ThreadTimestamp,
+				Latest:    item.Ts,
+				Oldest:    item.Ts,
+				Inclusive: true,
+				Limit:     maxMsgsPerItem,
+			}
+			replies, _, _, err := h.apiProvider.Slack().GetConversationRepliesContext(ctx, repliesParams)
+			if err == nil && len(replies) > 0 {
+				msgs := h.convHandler.convertMessagesFromHistory(ctx, replies, item.ItemID, false)
+				return msgs
+			}
+		}
+		msgs := h.convHandler.convertMessagesFromHistory(ctx, histResp.Messages, item.ItemID, false)
+		return msgs
+	} else {
+		repliesParams := &slack.GetConversationRepliesParameters{
+			ChannelID: item.ItemID,
+			Timestamp: item.Ts,
+			Latest:    item.Ts,
+			Oldest:    item.Ts,
+			Inclusive: true,
+			Limit:     maxMsgsPerItem,
+		}
+		replies, _, _, err := h.apiProvider.Slack().GetConversationRepliesContext(ctx, repliesParams)
+		if err == nil && len(replies) > 0 {
+			msgs := h.convHandler.convertMessagesFromHistory(ctx, replies, item.ItemID, false)
+			return msgs
+		} else {
+			return []Message{{
+				MsgID:   item.Ts,
+				Channel: channelName,
+				Text:    "[saved item — message not found in channel history]",
+				Time:    formatUnixTs(item.DateCreated),
+			}}
+		}
+	}
 }

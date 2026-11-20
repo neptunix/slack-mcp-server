@@ -201,3 +201,23 @@ func TestUnitSavedRemoveRequiresParams(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "required")
 }
+
+func TestUnitSavedPermalink(t *testing.T) {
+	assert.Equal(t, "https://x.slack.com/archives/C1/p1795076904606399",
+		savedPermalink("https://x.slack.com/", "C1", "1795076904.606399", ""))
+	assert.Equal(t, "https://x.slack.com/archives/C1/p1795076904606399?thread_ts=1795072641.996749&cid=C1",
+		savedPermalink("https://x.slack.com", "C1", "1795076904.606399", "1795072641.996749"))
+	assert.Equal(t, "https://x.slack.com/archives/C1/p1795076904606399",
+		savedPermalink("https://x.slack.com/", "C1", "1795076904.606399", "1795076904.606399"))
+	assert.Empty(t, savedPermalink("", "C1", "1.2", ""))
+}
+
+func TestUnitSavedMessageRowCSV(t *testing.T) {
+	rows := []SavedMessageRow{{TodoState: "saved", Message: Message{MsgID: "1.2", Channel: "C1"}}}
+
+	csvBytes, err := gocsv.MarshalBytes(&rows)
+	require.NoError(t, err)
+
+	assert.Contains(t, string(csvBytes), "TodoState,DateDue,MsgID,")
+	assert.Contains(t, string(csvBytes), "saved,,1.2,")
+}

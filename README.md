@@ -208,12 +208,12 @@ Mark a channel or DM as read.
   - `ts` (string, optional): Timestamp of the message to mark as read up to. If not provided, marks all messages as read.
 
 ### 16. saved_list
-List saved items from Slack's "Save for Later" panel. Returns items the user has saved, with optional message content. This replaces the deprecated `stars.list` API ([changelog](https://api.slack.com/changelog/2023-07-its-later-already-for-stars-and-reminders)).
+List items from Slack's Saved and To-dos panels (formerly "Save for Later"), with optional message content. Since Oct 2026 Slack splits them: items with a due date/reminder are To-dos, items without are Saved. This replaces the deprecated `stars.list` API ([changelog](https://api.slack.com/changelog/2023-07-its-later-already-for-stars-and-reminders)).
 
 > **Note:** This tool requires browser session tokens (`xoxc`/`xoxd`). It is not available with standard OAuth (`xoxp`) or bot (`xoxb`) tokens.
 
 - **Parameters:**
-  - `filter` (string, default `"saved"`): Filter saved items: `"saved"` (active/in-progress), `"completed"` (marked done), `"archived"`.
+  - `filter` (string, default `"saved"`): `"saved"` (all active items, Saved and To-dos), `"saved_no_due_date"` (Saved panel only), `"todo"` (To-dos panel only), `"completed"` (marked done), `"archived"`.
   - `limit` (number, default `50`): Maximum number of items to return. Auto-paginates.
   - `include_messages` (boolean, default `true`): If true, fetches the actual saved message content. If false, returns metadata only.
   - `max_messages_per_item` (number, default `5`): Max messages to fetch per saved item (for thread replies).
@@ -235,6 +235,15 @@ Clear all completed saved items from the "Save for Later" panel. This is a bulk 
 > **Note:** This tool requires browser session tokens (`xoxc`/`xoxd`). It is not available with standard OAuth (`xoxp`) or bot (`xoxb`) tokens.
 
 - **Parameters:** None.
+
+### 19. saved_remove
+Remove an item from Saved/To-dos entirely (Unsave). Unlike `saved_update` with `mark="completed"`, the item does not move to completed.
+
+> **Note:** This tool requires browser session tokens (`xoxc`/`xoxd`). It is not available with standard OAuth (`xoxp`) or bot (`xoxb`) tokens.
+
+- **Parameters:**
+  - `item_id` (string, required): Channel/DM ID where the saved message lives (from `saved_list` output).
+  - `ts` (string, required): Message timestamp of the saved item (from `saved_list` output).
 
 ## Resources
 

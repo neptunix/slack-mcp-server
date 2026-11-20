@@ -3,6 +3,8 @@ package handler
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/gocarina/gocsv"
@@ -21,7 +23,11 @@ type SavedItemRow struct {
 	DateCreated string `csv:"DateCreated"`
 	DateDue     string `csv:"DateDue"`
 	State       string `csv:"State"`
+	TodoState   string `csv:"TodoState"`
 }
+
+// ValidSavedFilters are the filter values accepted by saved.list.
+var ValidSavedFilters = []string{"saved", "saved_no_due_date", "todo", "completed", "archived"}
 
 type SavedHandler struct {
 	apiProvider *provider.ApiProvider
@@ -37,6 +43,9 @@ func (h *SavedHandler) SavedListHandler(ctx context.Context, request mcp.CallToo
 	h.logger.Debug("SavedListHandler called", zap.Any("params", request.Params))
 
 	filter := request.GetString("filter", "saved")
+	if !slices.Contains(ValidSavedFilters, filter) {
+		return nil, fmt.Errorf("invalid filter %q, must be one of: %s", filter, strings.Join(ValidSavedFilters, ", "))
+	}
 	limit := request.GetInt("limit", 50)
 	includeMessages := request.GetBool("include_messages", true)
 	maxMsgsPerItem := request.GetInt("max_messages_per_item", 5)
@@ -85,6 +94,7 @@ func (h *SavedHandler) SavedListHandler(ctx context.Context, request mcp.CallToo
 				DateCreated: formatUnixTs(item.DateCreated),
 				DateDue:     formatUnixTs(item.DateDue),
 				State:       item.State,
+				TodoState:   item.TodoState,
 			}
 			allItems = append(allItems, row)
 			fetched++
@@ -224,6 +234,26 @@ func (h *SavedHandler) SavedClearCompletedHandler(ctx context.Context, request m
 	}
 
 	return mcp.NewToolResultText("Successfully cleared all completed saved items"), nil
+}
+
+func (h *SavedHandler) SavedRemoveHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h.logger.Debug("SavedRemoveHandler called", zap.Any("params", request.Params))
+
+	itemID := request.GetString("item_id", "")
+	ts := request.GetString("ts", "")
+	if itemID == "" || ts == "" {
+		return nil, fmt.Errorf("item_id and ts are required parameters")
+	}
+
+	if err := h.apiProvider.Slack().SavedDelete(ctx, "message", itemID, ts); err != nil {
+		h.logger.Error("SavedDelete failed",
+			zap.String("item_id", itemID),
+			zap.String("ts", ts),
+			zap.Error(err))
+		return nil, fmt.Errorf("failed to remove saved item: %v", err)
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Successfully removed saved item (item_id=%s, ts=%s)", itemID, ts)), nil
 }
 
 func formatUnixTs(ts int64) string {

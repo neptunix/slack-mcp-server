@@ -35,6 +35,8 @@ type SavedItem struct {
 	DateSnoozedUntil int64  `json:"date_snoozed_until"`
 	Ts               string `json:"ts"`
 	State            string `json:"state"`
+	// TodoState is "saved", "to_do" or "completed" (Saved/To-dos split, Oct 2026).
+	TodoState string `json:"todo_state"`
 }
 
 type SavedCounts struct {
@@ -43,6 +45,8 @@ type SavedCounts struct {
 	ArchivedCount           int `json:"archived_count"`
 	CompletedCount          int `json:"completed_count"`
 	TotalCount              int `json:"total_count"`
+	SavedNoDueDateCount     int `json:"saved_no_due_date_count"`
+	TodoCount               int `json:"todo_count"`
 }
 
 func (cl *Client) SavedList(ctx context.Context, filter string, limit int, cursor string) (SavedListResponse, error) {
@@ -136,4 +140,36 @@ func (cl *Client) SavedClearCompleted(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+type savedDeleteForm struct {
+	BaseRequest
+	ItemType string `json:"item_type"`
+	ItemID   string `json:"item_id"`
+	Ts       string `json:"ts"`
+	WebClientFields
+}
+
+// SavedDelete removes an item from Saved/To-dos entirely (Unsave).
+func (cl *Client) SavedDelete(ctx context.Context, itemType, itemID, ts string) error {
+	ctx, task := trace.NewTask(ctx, "SavedDelete")
+	defer task.End()
+
+	form := savedDeleteForm{
+		BaseRequest:     BaseRequest{Token: cl.token},
+		ItemType:        itemType,
+		ItemID:          itemID,
+		Ts:              ts,
+		WebClientFields: webclientReason("saved-api/deleteSavedMessage"),
+	}
+
+	resp, err := cl.PostForm(ctx, "saved.delete", values(form, true))
+	if err != nil {
+		return err
+	}
+	r := baseResponse{}
+	if err := cl.ParseResponse(&r, resp); err != nil {
+		return err
+	}
+	return r.validate("saved.delete")
 }

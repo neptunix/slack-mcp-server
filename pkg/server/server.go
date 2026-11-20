@@ -47,6 +47,7 @@ const (
 	ToolSavedList                   = "saved_list"
 	ToolSavedUpdate                 = "saved_update"
 	ToolSavedClearCompleted         = "saved_clear_completed"
+	ToolSavedRemove                 = "saved_remove"
 )
 
 var ValidToolNames = []string{
@@ -72,6 +73,7 @@ var ValidToolNames = []string{
 	ToolSavedList,
 	ToolSavedUpdate,
 	ToolSavedClearCompleted,
+	ToolSavedRemove,
 }
 
 func ValidateEnabledTools(tools []string) error {
@@ -539,11 +541,11 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 	if !provider.IsBotToken() && !provider.IsOAuth() && shouldAddTool(ToolSavedList, enabledTools, "") {
 		savedHandler := handler.NewSavedHandler(provider, logger, conversationsHandler)
 		s.AddTool(mcp.NewTool(ToolSavedList,
-			mcp.WithDescription("List saved items from Slack's 'Save for Later' panel. Returns items the user has saved, with optional message content. Replaces the deprecated stars.list API. Requires browser session tokens (xoxc/xoxd)."),
+			mcp.WithDescription("List items from Slack's Saved and To-dos panels (formerly 'Save for Later'), with optional message content. Since Oct 2026 Slack splits them: items with a due date/reminder are To-dos, items without are Saved. Replaces the deprecated stars.list API. Requires browser session tokens (xoxc/xoxd)."),
 			mcp.WithTitleAnnotation("List Saved Items"),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithString("filter",
-				mcp.Description("Filter saved items: 'saved' (active/in-progress, default), 'completed' (marked done), 'archived'."),
+				mcp.Description("Filter: 'saved' (all active items, Saved and To-dos, default), 'saved_no_due_date' (Saved panel only), 'todo' (To-dos panel only), 'completed' (marked done), 'archived'."),
 				mcp.DefaultString("saved"),
 			),
 			mcp.WithNumber("limit",
@@ -588,6 +590,22 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 				mcp.WithTitleAnnotation("Clear Completed Saved Items"),
 				mcp.WithDestructiveHintAnnotation(true),
 			), savedHandler.SavedClearCompletedHandler)
+		}
+
+		if shouldAddTool(ToolSavedRemove, enabledTools, "") {
+			s.AddTool(mcp.NewTool(ToolSavedRemove,
+				mcp.WithDescription("Remove an item from Saved/To-dos entirely (Unsave). Unlike saved_update mark=completed, the item does not move to completed. Use item_id and ts values from saved_list output."),
+				mcp.WithTitleAnnotation("Remove Saved Item"),
+				mcp.WithDestructiveHintAnnotation(true),
+				mcp.WithString("item_id",
+					mcp.Required(),
+					mcp.Description("Channel/DM ID where the saved message lives (from saved_list output)."),
+				),
+				mcp.WithString("ts",
+					mcp.Required(),
+					mcp.Description("Message timestamp of the saved item (from saved_list output)."),
+				),
+			), savedHandler.SavedRemoveHandler)
 		}
 	}
 

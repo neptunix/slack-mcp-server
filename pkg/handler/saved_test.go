@@ -1,12 +1,15 @@
 package handler
 
 import (
+	"context"
 	"testing"
 
 	"github.com/gocarina/gocsv"
 	"github.com/korotovsky/slack-mcp-server/pkg/provider/edge"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func TestUnitSavedItemCSVFormat(t *testing.T) {
@@ -162,4 +165,39 @@ func TestUnitSavedListResponseParsing(t *testing.T) {
 
 	second := resp.SavedItems[1]
 	assert.Equal(t, int64(0), second.DateDue)
+}
+
+func TestUnitSavedItemTodoStateCSV(t *testing.T) {
+	items := []SavedItemRow{
+		{ItemID: "C1", Ts: "1.1", State: "in_progress", TodoState: "saved"},
+		{ItemID: "C2", Ts: "2.2", State: "in_progress", TodoState: "to_do"},
+	}
+
+	csvBytes, err := gocsv.MarshalBytes(&items)
+	require.NoError(t, err)
+	csvStr := string(csvBytes)
+
+	assert.Contains(t, csvStr, "DateDue,State,TodoState")
+	assert.Contains(t, csvStr, "in_progress,saved")
+	assert.Contains(t, csvStr, "in_progress,to_do")
+}
+
+func TestUnitSavedListInvalidFilter(t *testing.T) {
+	h := NewSavedHandler(nil, zap.NewNop(), nil)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"filter": "todos"}
+
+	_, err := h.SavedListHandler(context.Background(), req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "saved_no_due_date")
+}
+
+func TestUnitSavedRemoveRequiresParams(t *testing.T) {
+	h := NewSavedHandler(nil, zap.NewNop(), nil)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"item_id": "C1"}
+
+	_, err := h.SavedRemoveHandler(context.Background(), req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "required")
 }
